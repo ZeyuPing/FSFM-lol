@@ -259,19 +259,19 @@ The paper should emphasize:
 
 ## 10. Git workflow for two local developers plus one server clone
 
-Recommended branch structure:
+We will collaborate directly on `main`:
 
-- `main`: stable baseline
-- `feat/ftf-diff`: shared feature branch for code and paper updates
+- `main`: the shared working branch for code changes, docs, and experiment scripts
+- No long-lived feature branches for this project
 
 ### 10.1 Local developer workflow
 
-Before starting:
+Before starting any new edit session:
 
 ```bash
 git checkout main
 git pull --rebase origin main
-git checkout -b feat/ftf-diff
+git status --short
 ```
 
 When making changes:
@@ -281,38 +281,39 @@ git status
 git add fsfm-3c/models_vit.py \
         fsfm-3c/finuetune/cross_dataset_unseen_DiFF/main_finetune_DiFF.py \
         fsfm-3c/finuetune/cross_dataset_unseen_DiFF/main_test_DiFF.py \
-        FSFM_DiFF_FTF_Plan.md \
-        FTF_DiFF_paper_draft.tex
+        FSFM_DiFF_FTF_Plan.md
 git commit -m "Add forgery-aware token fusion for DiFF"
-git push -u origin feat/ftf-diff
+git push origin main
 ```
 
-If the second collaborator also edits the same branch:
+If the other collaborator has pushed new commits before you finish:
 
 ```bash
 git fetch origin
-git checkout feat/ftf-diff
-git pull --rebase origin feat/ftf-diff
+git pull --rebase origin main
 ```
+
+If your local commit history already diverged, rebase your local work on top of the latest `origin/main` before pushing.
 
 ### 10.2 Server sync workflow
 
-On the server clone, always pull before launching experiments:
+On the server clone, always sync `main` before launching experiments:
 
 ```bash
+git checkout main
 git fetch origin --prune
-git checkout feat/ftf-diff
-git pull --rebase origin feat/ftf-diff
+git pull --rebase origin main
 git status --short
 ```
 
-Then run preprocessing or training from the same commit.
+Then run preprocessing or training from the synced commit.
 
 ### 10.3 Conflict rules
 
 - Never commit `datasets/` contents.
 - Never commit checkpoints, logs, or tensorboard files.
-- If local code and server code diverge, resolve on the local machine first, then push, then pull on the server again.
+- Never edit and push blindly from the server if the local developers have already moved `main`; always pull first.
+- If local code and server code diverge, resolve conflicts on a local machine, push the resolved `main`, then pull on the server again.
 - If a checkpoint is tied to a specific commit, record the commit hash in the experiment log.
 
 ## 11. Suggested experiment log format
