@@ -1,0 +1,26 @@
+# Ignore large dataset and model checkpoint folders (downloaded external assets)
+# 只忽略本地下载的数据集和权重文件，不提交到 git
+
+# Pretrain / finetune datasets
+/datasets/**
+
+# Pretrain checkpoints and logs
+/fsfm-3c/pretrain/checkpoint/**
+
+# Python virtual env, pycache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Optional: local user files
+*.log
+
+# Local paper assets that should stay outside git
+conference_101719.tex
+Wang_FSFM_A_Generalizable_Face_Security_Foundation_Model_via_Self-Supervised_Facial_CVPR_2025_paper.pdf

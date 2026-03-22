@@ -121,7 +121,17 @@ def get_args_parser():
     parser.set_defaults(global_pool=True)
     parser.add_argument('--cls_token', action='store_false', dest='global_pool',
                         help='Use class token instead of global pool for classification')
-    
+
+    # * Forgery-Aware Token Fusion (FTF) params
+    parser.add_argument('--token_fusion', action='store_true', default=False,
+                        help='Enable Forgery-Aware Token Fusion head (requires --model vit_base_patch16_tokenfusion)')
+    parser.add_argument('--topk_patches', type=int, default=16,
+                        help='Number of top-k anomalous patch tokens to aggregate in FTF (default: 16)')
+    parser.add_argument('--fusion_tau', type=float, default=0.5,
+                        help='Temperature for softmax patch weighting in FTF (default: 0.5)')
+    parser.add_argument('--fusion_gate_hidden_dim', type=int, default=256,
+                        help='Hidden dimension of the gating MLP in FTF (default: 256)')
+
     # Dataset (with train/val folder structure) parameters. modified for unseen DiFF evaluation
     parser.add_argument('--data_path', default=None, type=str,
                         help='train dataset path with /train/classes sub-folder')
@@ -309,10 +319,31 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
+    # ── FTF / model consistency check ────────────────────────────────────────
+    FTF_MODEL = 'vit_base_patch16_tokenfusion'
+    if args.token_fusion and args.model != FTF_MODEL:
+        print(
+            f"[WARNING] --token_fusion is set but --model is '{args.model}'. "
+            f"Auto-switching to '{FTF_MODEL}'."
+        )
+        args.model = FTF_MODEL
+    if args.model == FTF_MODEL and not args.token_fusion:
+        raise ValueError(
+            f"--model is set to '{FTF_MODEL}' but --token_fusion is not enabled. "
+            "Add --token_fusion to pass the required FTF hyper-parameters, "
+            "or switch to --model vit_base_patch16 for the standard baseline."
+        )
+    # ─────────────────────────────────────────────────────────────────────────
+
     model = models_vit.__dict__[args.model](
         num_classes=args.nb_classes,
         drop_path_rate=args.drop_path,
         global_pool=args.global_pool,
+        **({
+            'topk_patches': args.topk_patches,
+            'fusion_tau': args.fusion_tau,
+            'fusion_gate_hidden_dim': args.fusion_gate_hidden_dim,
+        } if args.token_fusion else {})
     )
 
     if args.finetune and not args.eval:
@@ -334,9 +365,27 @@ def main(args):
         print(msg)
 
         if args.global_pool:
-            assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
+            expected_missing = {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
         else:
-            assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
+            expected_missing = {'head.weight', 'head.bias'}
+        # FTF-specific parameters are newly added and will always be missing from
+        # the FSFM pretrained checkpoint – whitelist them explicitly so the check
+        # remains strict for every other (backbone) key.
+        ftf_only_keys = {
+            'fusion_gate.0.weight', 'fusion_gate.0.bias',
+            'fusion_gate.2.weight', 'fusion_gate.2.bias',
+        }
+        allowed_missing = expected_missing | (ftf_only_keys if args.token_fusion else set())
+        unexpected_missing = set(msg.missing_keys) - allowed_missing
+        assert not unexpected_missing, (
+            f"Unexpected missing keys when loading pretrained checkpoint – "
+            f"possible backbone mismatch:\n  {sorted(unexpected_missing)}"
+        )
+        assert expected_missing <= set(msg.missing_keys), (
+            f"Expected classification head keys to be absent from the pretrained "
+            f"checkpoint, but some were found:\n"
+            f"  missing from checkpoint: {sorted(expected_missing - set(msg.missing_keys))}"
+        )
 
         # manually initialize fc layer
         trunc_normal_(model.head.weight, std=2e-5)

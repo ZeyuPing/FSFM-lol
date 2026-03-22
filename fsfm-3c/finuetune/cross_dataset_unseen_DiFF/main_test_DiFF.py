@@ -124,6 +124,16 @@ def get_args_parser():
     parser.add_argument('--cls_token', action='store_false', dest='global_pool',
                         help='Use class token instead of global pool for classification')
 
+    # * Forgery-Aware Token Fusion (FTF) params
+    parser.add_argument('--token_fusion', action='store_true', default=False,
+                        help='Enable Forgery-Aware Token Fusion head (requires --model vit_base_patch16_tokenfusion)')
+    parser.add_argument('--topk_patches', type=int, default=16,
+                        help='Number of top-k anomalous patch tokens to aggregate in FTF (default: 16)')
+    parser.add_argument('--fusion_tau', type=float, default=0.5,
+                        help='Temperature for softmax patch weighting in FTF (default: 0.5)')
+    parser.add_argument('--fusion_gate_hidden_dim', type=int, default=256,
+                        help='Hidden dimension of the gating MLP in FTF (default: 256)')
+
     # Dataset parameters
     parser.add_argument('--data_path', default='/datasets01/imagenet_full_size/061417/', type=str,
                         help='dataset path')
@@ -207,10 +217,31 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
+    # ── FTF / model consistency check ────────────────────────────────────────
+    FTF_MODEL = 'vit_base_patch16_tokenfusion'
+    if args.token_fusion and args.model != FTF_MODEL:
+        print(
+            f"[WARNING] --token_fusion is set but --model is '{args.model}'. "
+            f"Auto-switching to '{FTF_MODEL}'."
+        )
+        args.model = FTF_MODEL
+    if args.model == FTF_MODEL and not args.token_fusion:
+        raise ValueError(
+            f"--model is set to '{FTF_MODEL}' but --token_fusion is not enabled. "
+            "Add --token_fusion to pass the required FTF hyper-parameters, "
+            "or switch to --model vit_base_patch16 for the standard baseline."
+        )
+    # ─────────────────────────────────────────────────────────────────────────
+
     model = models_vit.__dict__[args.model](
         num_classes=args.nb_classes,
         drop_path_rate=args.drop_path,
         global_pool=args.global_pool,
+        **({
+            'topk_patches': args.topk_patches,
+            'fusion_tau': args.fusion_tau,
+            'fusion_gate_hidden_dim': args.fusion_gate_hidden_dim,
+        } if args.token_fusion else {})
     )
 
     model.to(device)
