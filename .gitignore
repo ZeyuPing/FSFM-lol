@@ -23,3 +23,4 @@ Thumbs.db
 
 # Local paper assets that should stay outside git
 *.pdf
+*.tex

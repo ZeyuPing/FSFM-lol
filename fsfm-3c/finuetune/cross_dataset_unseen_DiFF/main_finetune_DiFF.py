@@ -132,6 +132,17 @@ def get_args_parser():
     parser.add_argument('--fusion_gate_hidden_dim', type=int, default=256,
                         help='Hidden dimension of the gating MLP in FTF (default: 256)')
 
+    # * Residual-View Consistency (RVC) params
+    parser.add_argument('--residual_consistency', action='store_true', default=False,
+                        help='Enable Residual-View Consistency training loss')
+    parser.add_argument('--rcr_lambda', type=float, default=0.1,
+                        help='Weight of the RVC consistency loss (default: 0.1)')
+    parser.add_argument('--rcr_temp', type=float, default=2.0,
+                        help='Temperature for softmax in RVC KL divergence (default: 2.0)')
+    parser.add_argument('--rcr_filter', type=str, default='gaussian',
+                        choices=['gaussian', 'laplacian'],
+                        help='High-pass filter for residual view: gaussian (x-blur) or laplacian (default: gaussian)')
+
     # Dataset (with train/val folder structure) parameters. modified for unseen DiFF evaluation
     parser.add_argument('--data_path', default=None, type=str,
                         help='train dataset path with /train/classes sub-folder')
@@ -385,6 +396,10 @@ def main(args):
             f"Expected classification head keys to be absent from the pretrained "
             f"checkpoint, but some were found:\n"
             f"  missing from checkpoint: {sorted(expected_missing - set(msg.missing_keys))}"
+        )
+        assert not msg.unexpected_keys, (
+            f"Checkpoint contains keys not present in the model – "
+            f"possible architecture mismatch:\n  {sorted(msg.unexpected_keys)}"
         )
 
         # manually initialize fc layer

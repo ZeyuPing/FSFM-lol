@@ -26,6 +26,41 @@ import util.lr_sched as lr_sched
 from util.metrics import *
 
 
+_GAUSSIAN_KERNEL = None
+_LAPLACIAN_KERNEL = None
+
+
+def _highpass_residual(x: torch.Tensor, filter_type: str = 'gaussian') -> torch.Tensor:
+    """Return a clamped high-pass residual view of x.
+
+    Args:
+        x: input image tensor (B, C, H, W)
+        filter_type: 'gaussian' computes x - GaussianBlur(x);
+                     'laplacian' applies a discrete Laplacian kernel directly.
+    """
+    global _GAUSSIAN_KERNEL, _LAPLACIAN_KERNEL
+    C = x.shape[1]
+    if filter_type == 'laplacian':
+        if _LAPLACIAN_KERNEL is None or _LAPLACIAN_KERNEL.device != x.device or _LAPLACIAN_KERNEL.shape[0] != C:
+            # 3x3 discrete Laplacian
+            k2d = torch.tensor([[0., 1., 0.],
+                                 [1., -4., 1.],
+                                 [0., 1., 0.]], dtype=x.dtype, device=x.device)
+            _LAPLACIAN_KERNEL = k2d.view(1, 1, 3, 3).expand(C, 1, 3, 3).contiguous()
+        residual = F.conv2d(x, _LAPLACIAN_KERNEL, padding=1, groups=C)
+    else:  # gaussian
+        if _GAUSSIAN_KERNEL is None or _GAUSSIAN_KERNEL.device != x.device or _GAUSSIAN_KERNEL.shape[0] != C:
+            # 5x5 Gaussian kernel, sigma≈1.4
+            k1d = torch.tensor([1., 4., 6., 4., 1.], dtype=x.dtype, device=x.device)
+            k2d = (k1d[:, None] * k1d[None, :]) / 256.0  # 5x5, sum=1
+            _GAUSSIAN_KERNEL = k2d.view(1, 1, 5, 5).expand(C, 1, 5, 5).contiguous()
+        blur = F.conv2d(x, _GAUSSIAN_KERNEL, padding=2, groups=C)
+        residual = x - blur
+    # normalise to [-1, 1] range so downstream layers see comparable scale
+    residual = residual / (residual.abs().amax(dim=(1, 2, 3), keepdim=True).clamp(min=1e-6))
+    return residual
+
+
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
@@ -60,8 +95,21 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             # outputs = model(samples)
             outputs = model(samples).to(device, non_blocking=True)  # modified
             loss = criterion(outputs, targets)
+            if getattr(args, 'residual_consistency', False):
+                samples_r = _highpass_residual(samples, getattr(args, 'rcr_filter', 'gaussian'))
+                outputs_r = model(samples_r).to(device, non_blocking=True)
+                T = getattr(args, 'rcr_temp', 2.0)
+                p = F.softmax(outputs.float() / T, dim=-1)
+                q = F.softmax(outputs_r.float() / T, dim=-1)
+                loss_rvc = 0.5 * (
+                    F.kl_div(q.log(), p, reduction='batchmean') +
+                    F.kl_div(p.log(), q, reduction='batchmean')
+                )
+                loss = loss + getattr(args, 'rcr_lambda', 0.1) * loss_rvc
 
         loss_value = loss.item()
+        if getattr(args, 'residual_consistency', False):
+            loss_rvc_value = loss_rvc.item()
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -77,6 +125,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         torch.cuda.synchronize()
 
         metric_logger.update(loss=loss_value)
+        if getattr(args, 'residual_consistency', False):
+            metric_logger.update(loss_rvc=loss_rvc_value)
         min_lr = 10.
         max_lr = 0.
         for group in optimizer.param_groups:
