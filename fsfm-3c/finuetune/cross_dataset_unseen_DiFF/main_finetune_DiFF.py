@@ -397,9 +397,28 @@ def main(args):
             f"checkpoint, but some were found:\n"
             f"  missing from checkpoint: {sorted(expected_missing - set(msg.missing_keys))}"
         )
-        assert not msg.unexpected_keys, (
-            f"Checkpoint contains keys not present in the model – "
-            f"possible architecture mismatch:\n  {sorted(msg.unexpected_keys)}"
+
+        # The FS-VFM pretraining checkpoint carries extra self-supervised heads
+        # (decoder / predictor / projector / mask token / encoder norm) that are
+        # intentionally absent from the fine-tuning model. We only flag truly
+        # unknown leftovers here, so the loader stays strict for backbone
+        # mismatches while still accepting the expected pretraining heads.
+        allowed_unexpected_prefixes = (
+            'decoder_',
+            'rep_decoder_',
+            'predictor.',
+            'projector.',
+            'mask_token',
+            'norm.',
+        )
+        unexpected_extra = [
+            k for k in msg.unexpected_keys
+            if not k.startswith(allowed_unexpected_prefixes)
+        ]
+        assert not unexpected_extra, (
+            "Checkpoint contains unexpected keys not accounted for by the "
+            f"FS-VFM pretraining heads – possible architecture mismatch:\n"
+            f"  {sorted(unexpected_extra)}"
         )
 
         # manually initialize fc layer
