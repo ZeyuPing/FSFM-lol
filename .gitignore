@@ -3,6 +3,7 @@
 
 # Pretrain / finetune datasets
 /datasets/**
+/fsfm-3c/finuetune/cross_dataset_unseen_DiFF/checkpoint
 
 # Pretrain checkpoints and logs
 /fsfm-3c/pretrain/checkpoint/**
